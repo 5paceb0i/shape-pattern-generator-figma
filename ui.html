@@ -1,0 +1,39 @@
+<h2>Rectangle Creator</h2>
+<p>Count: <input id="count" value="5" style="visibility: hidden" /></p>
+<p id="selectionMessage">Nothing Selected. Select something first!!</p>
+<button id="create" style="visibility: hidden">Create</button>
+<button id="cancel" style="visibility: hidden">Cancel</button>
+<script>
+  const selectionText = document.getElementById("selectionMessage");
+  const inputField = document.getElementById("count");
+  const createBtn = document.getElementById("create");
+  const cancelBtn = document.getElementById("cancel");
+  window.onmessage = (e) => {
+    if (e.data.pluginMessage.selection === "yes") {
+      selectionText.style.visibility = "hidden";
+
+      createBtn.style.visibility = "visible";
+      cancelBtn.style.visibility = "visible";
+      inputField.style.visibility = "visible";
+    } else {
+      selectionText.style.visibility = "visible";
+
+      createBtn.style.visibility = "hidden";
+      cancelBtn.style.visibility = "hidden";
+      inputField.style.visibility = "hidden";
+    }
+  };
+
+  document.getElementById("create").onclick = () => {
+    const textbox = document.getElementById("count");
+    const count = parseInt(textbox.value, 10);
+    parent.postMessage(
+      { pluginMessage: { type: "create-rectangles", count } },
+      "*"
+    );
+  };
+
+  document.getElementById("cancel").onclick = () => {
+    parent.postMessage({ pluginMessage: { type: "cancel" } }, "*");
+  };
+</script>
