@@ -5,13 +5,10 @@
   "main": "code.js",
   "capabilities": [],
   "enableProposedApi": false,
-  "editorType": [
-    "figma"
-  ],
+  "editorType": ["figma"],
   "ui": "ui.html",
   "networkAccess": {
-    "allowedDomains": [
-      "none"
-    ]
+    "allowedDomains": ["https://cdn.jsdelivr.net/", "https://rsms.me/"],
+    "reasoning": "My plugin requires CDN link for external CSS."
   }
 }

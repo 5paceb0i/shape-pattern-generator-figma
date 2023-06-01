@@ -7,10 +7,30 @@
 
 // This shows the HTML page in "ui.html".
 figma.showUI(__html__);
+figma.ui.resize(400, 300);
 
 // Calls to "parent.postMessage" from within the HTML page will trigger this
 // callback. The callback will be passed the "pluginMessage" property of the
 // posted message.
+
+const readLocalStorage = async () => {
+  const pattern = await figma.clientStorage.getAsync("pattern");
+  const density = await figma.clientStorage.getAsync("density");
+  const opacity = await figma.clientStorage.getAsync("opacity");
+  const stroke = await figma.clientStorage.getAsync("stroke");
+  figma.ui.postMessage(
+    {
+      job: "storage",
+      pattern: pattern,
+      density: density,
+      opacity: opacity,
+      stroke: stroke,
+    },
+    { origin: "*" }
+  );
+};
+
+readLocalStorage();
 
 const colorArray = [
   { r: 0.184, g: 0.502, b: 0.929 },
@@ -26,25 +46,40 @@ const colorArray = [
 
 const randomShape = 1 + Math.floor(Math.random() * 6);
 let counter = 0;
+let lowerScaleFactor = 0.3;
+let higherScaleFactor = 0.6;
+
+const overflowFactor = 1.1;
 
 if (figma.currentPage.selection.length > 0) {
-  figma.ui.postMessage({ selection: "yes" }, { origin: "*" });
+  figma.ui.postMessage({ job: "selection", selection: "yes" }, { origin: "*" });
 } else {
-  figma.ui.postMessage({ selection: "no" }, { origin: "*" });
+  figma.ui.postMessage({ job: "selection", selection: "no" }, { origin: "*" });
 }
 
 figma.on("selectionchange", () => {
   if (figma.currentPage.selection.length > 0) {
-    figma.ui.postMessage({ selection: "yes" }, { origin: "*" });
+    figma.ui.postMessage(
+      { job: "selection", selection: "yes" },
+      { origin: "*" }
+    );
   } else {
-    figma.ui.postMessage({ selection: "no" }, { origin: "*" });
+    figma.ui.postMessage(
+      { job: "selection", selection: "no" },
+      { origin: "*" }
+    );
   }
 });
 
-figma.ui.onmessage = (msg) => {
+figma.ui.onmessage = async (msg) => {
   // One way of distinguishing between different types of messages sent from
   // your HTML page is to use an object with a "type" property like this.
   if (msg.type === "create-rectangles") {
+    figma.clientStorage.setAsync("pattern", msg.patternType);
+    figma.clientStorage.setAsync("density", msg.count);
+    figma.clientStorage.setAsync("opacity", msg.opacitySwitch);
+    figma.clientStorage.setAsync("stroke", msg.strokeSwitch);
+
     const nodes: SceneNode[] = [];
     const selectedFrame = figma.currentPage.selection[0] as FrameNode;
     const frameWidth = selectedFrame.width;
@@ -56,44 +91,162 @@ figma.ui.onmessage = (msg) => {
       createFlower,
       createSakurai,
       createStar1,
-      createSun,
-      createSpring,
       createStar2,
+      createPill,
+      createSemiCircle,
+      createTube,
     ];
 
-    //shapes at the edge of frame
-    const atEdges = true;
-    const lowerLimitW = selectedFrame.width * 0.02;
-    const higherLimitW = selectedFrame.width * 0.98;
-    const lowerLimitH = selectedFrame.height * 0.02;
-    const higherLimitH = selectedFrame.height * 0.98;
+    const totalShapes = shapesArray.length;
 
-    for (let i = 0; i < msg.count; i++) {
-      //const rect = figma.createRectangle();
-      //figma.currentPage.appendChild(rect);
-      //nodes.push(rect);
-      const shapeNode = shapesArray[(randomShape + i) % 9]();
-      if (atEdges) {
-        if (i % 4 == 0) {
-          shapeNode.x = shapeNode.width * 0.4 + Math.random() * lowerLimitW;
-        } else if (i % 4 == 1) {
-          shapeNode.x =
-            higherLimitW +
-            Math.random() *
-              (selectedFrame.width - shapeNode.width * 0.4 - higherLimitW);
-        } else if (i % 4 == 2) {
-          shapeNode.y =
-            higherLimitH +
-            Math.random() *
-              (selectedFrame.height - shapeNode.height * 0.4 - higherLimitH);
-        } else if (i % 4 == 3) {
-          shapeNode.y = shapeNode.height * 0.4 + Math.random() * lowerLimitH;
-        }
-        shapeNode.opacity = 0.4 + Math.random() * 0.6;
+    let randomMode = false;
+    let autoLayouted = false;
+    let patternLayout = false;
+
+    //opacityHandle
+    let randomizeOpacity = msg.opacitySwitch;
+
+    //check for random, border or cover mode
+    if (msg.patternType === "random") {
+      randomMode = true;
+    } else if (msg.patternType === "border") {
+      autoLayouted = true;
+      lowerScaleFactor = 0.4;
+      higherScaleFactor = 0.2;
+    } else if (msg.patternType === "cover") {
+      patternLayout = true;
+      lowerScaleFactor = 0.2;
+      higherScaleFactor = 0.4;
+    }
+
+    //border functionalities
+    if (randomMode) {
+      for (let i = 0; i < msg.count; i++) {
+        const shapeNode = shapesArray[(randomShape + i) % totalShapes]();
+
+        nodes.push(shapeNode);
+        selectedFrame.appendChild(nodes[i]);
+
+        counter++;
       }
-      nodes.push(shapeNode);
-      counter++;
-      //shapesArray[1]();
+    }
+
+    if (autoLayouted) {
+      const frame1 = createAutoLayoutFrame("top");
+      const frame2 = createAutoLayoutFrame("down");
+      const frame3 = createAutoLayoutFrame("left");
+      const frame4 = createAutoLayoutFrame("right");
+
+      const landscape = [frame1, frame2, frame3, frame4];
+      const portrait = [frame3, frame4, frame1, frame2];
+      let populationMode = [];
+
+      //decide population of shapes based on landscape or portrait parent frame
+      if (selectedFrame.width >= selectedFrame.height) {
+        populationMode = landscape;
+      } else {
+        populationMode = portrait;
+      }
+
+      for (let i = 0; i < msg.count; i++) {
+        counter++;
+        const shapeNode = shapesArray[(randomShape + i) % totalShapes]();
+        if (i % 6 === 0 || i % 6 === 4) {
+          populationMode[i % 4].appendChild(shapeNode);
+          nodes.push(shapeNode);
+        } else if (i % 6 === 1 || i % 6 === 5) {
+          populationMode[i % 4].appendChild(shapeNode);
+          nodes.push(shapeNode);
+        } else if (i % 6 === 2) {
+          populationMode[i % 4].appendChild(shapeNode);
+          nodes.push(shapeNode);
+        } else if (i % 6 === 3) {
+          populationMode[i % 4].appendChild(shapeNode);
+          nodes.push(shapeNode);
+        }
+      }
+
+      frame1.x = -((overflowFactor - 1) * selectedFrame.width) / 2;
+      frame1.y = -(frame1.height / 5);
+
+      frame2.x = -((overflowFactor - 1) * selectedFrame.width) / 2;
+      frame2.y = selectedFrame.height - (frame2.height * 4) / 5;
+
+      frame3.x = -(frame3.width / 5);
+      frame3.y = -((overflowFactor - 1) * selectedFrame.height) / 5;
+
+      frame4.x = selectedFrame.width - (frame4.width * 4) / 5;
+      frame4.y = -((overflowFactor - 1) * selectedFrame.height) / 5;
+
+      selectedFrame.appendChild(frame1);
+      selectedFrame.appendChild(frame2);
+      selectedFrame.appendChild(frame3);
+      selectedFrame.appendChild(frame4);
+    }
+
+    if (patternLayout === true) {
+      //patternLayout functionalities
+      let randomPatternNumber = 1 + Math.floor(Math.random() * 2);
+      const rowItemCount1 = 7;
+      const rowItemCount2 = 8;
+      const finalPatternFrame = figma.createFrame() as FrameNode;
+      finalPatternFrame.layoutMode = "VERTICAL";
+      finalPatternFrame.primaryAxisSizingMode = "FIXED";
+      finalPatternFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+      finalPatternFrame.counterAxisSizingMode = "AUTO";
+      finalPatternFrame.fills = [];
+      finalPatternFrame.resize(selectedFrame.width, selectedFrame.height);
+
+      for (let i = 0; i < msg.count; i++) {
+        const rowFrame = createPatternLayoutFrame();
+        if (randomPatternNumber % 2 == 0) {
+          const randomNum = Math.floor(Math.random() * totalShapes);
+          for (let i = 0; i < rowItemCount1; i++) {
+            counter++;
+            const randomShape = shapesArray[(randomNum + i) % totalShapes]();
+            rowFrame.appendChild(randomShape);
+            nodes.push(randomShape);
+          }
+          randomPatternNumber = 1;
+        } else if (randomPatternNumber % 2 == 1) {
+          const randomNum = Math.floor(Math.random() * totalShapes);
+          for (let i = 0; i < rowItemCount2; i++) {
+            counter++;
+            const randomShape = shapesArray[(randomNum + i) % totalShapes]();
+            rowFrame.appendChild(randomShape);
+            nodes.push(randomShape);
+          }
+          randomPatternNumber = 0;
+        }
+        finalPatternFrame.appendChild(rowFrame);
+      }
+      selectedFrame.appendChild(finalPatternFrame);
+    }
+
+    if (randomizeOpacity) {
+      for (let i in nodes) {
+        (nodes[i] as VectorNode).opacity = 0.4 + Math.random() * 0.6;
+      }
+    }
+
+    if (msg.strokeSwitch) {
+      for (let i in nodes) {
+        (nodes[i] as VectorNode).strokes = [
+          {
+            type: "SOLID",
+            visible: true,
+            opacity: 1,
+            blendMode: "NORMAL",
+            color: {
+              r: 0.06666667014360428,
+              g: 0.06666667014360428,
+              b: 0.06666667014360428,
+            },
+          },
+        ];
+
+        (nodes[i] as VectorNode).strokeWeight = 3;
+      }
     }
 
     //figma.currentPage.selection = nodes;
@@ -109,11 +262,10 @@ figma.ui.onmessage = (msg) => {
 function createWave() {
   var vector_2_85 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_85);
 
   //--------------enter size variables here
   vector_2_85.resize(267.0, 18.0);
-  vector_2_85.name = "Waves";
+  vector_2_85.name = "zig-zag";
 
   //--------------color variables here
   vector_2_85.strokes = [
@@ -304,17 +456,17 @@ function createWave() {
       data: "M 0 0 C 13.354700088500977 0 13.354700088500977 18 26.709400177001953 18 C 40.06410026550293 18 40.06410026550293 0 53.418800354003906 0 C 66.77350044250488 0 66.7735013961792 18 80.0969009399414 18 C 93.45200061798096 18 93.45200157165527 0 106.7750015258789 0 C 120.13000106811523 0 120.13000297546387 18 133.4530029296875 18 C 146.80800247192383 18 146.80800247192383 0 160.16200256347656 0 C 173.5170021057129 0 173.51699447631836 18 186.8719940185547 18 C 200.22599411010742 18 200.22599411010742 0 213.58099365234375 0 C 226.93599319458008 0 226.93598556518555 18 240.29098510742188 18 C 253.6449851989746 18 253.64500045776367 0 267 0",
     },
   ];
-  vector_2_85.rescale(0.5 + Math.random() * 1.1);
-  vector_2_85.rotation = Math.random() * 360;
+  vector_2_85.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
+  vector_2_85.rotation = Math.random() * 270;
   return vector_2_85;
 }
 
 function createStair() {
   var vector_2_86 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_86);
+
   vector_2_86.resize(200.0, 200.0);
-  vector_2_86.name = "Stairs 2";
+  vector_2_86.name = "stair";
   vector_2_86.fills = [
     {
       type: "SOLID",
@@ -512,7 +664,7 @@ function createStair() {
       data: "M 50 0 L 0 0 L 0 200 L 200 200 L 200 150 L 150 150 L 150 100 L 100 100 L 100 50 L 50 50 L 50 0 Z",
     },
   ];
-  vector_2_86.rescale(0.5 + Math.random() * 1.1);
+  vector_2_86.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_86.rotation = Math.random() * 360;
   return vector_2_86;
 }
@@ -520,9 +672,9 @@ function createStair() {
 function createU() {
   var vector_2_87 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_87);
+
   vector_2_87.resize(187.0, 196.0);
-  vector_2_87.name = "Magnet";
+  vector_2_87.name = "UTube";
   vector_2_87.fills = [
     {
       type: "SOLID",
@@ -712,18 +864,19 @@ function createU() {
       data: "M 88.40199279785156 0 L 0 0 L 0 67.66899871826172 L 88.40199279785156 67.66899871826172 C 105.27099227905273 67.66899871826172 118.95700073242188 81.3080005645752 118.95700073242188 98 C 118.95700073242188 114.68899917602539 105.27099227905273 128.33099365234375 88.40199279785156 128.33099365234375 L 0 128.33099365234375 L 0 196 L 88.40199279785156 196 C 142.7469940185547 196 187 152.0719985961914 187 98 C 187 43.92789840698242 142.7469940185547 0 88.40199279785156 0 Z",
     },
   ];
-  vector_2_87.rescale(0.5 + Math.random() * 1.1);
+  vector_2_87.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_87.rotation = Math.random() * 360;
   return vector_2_87;
 }
 
 function createFlower() {
-  var vector_2_81 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_81);
-  vector_2_81.resize(211.9999084473, 234.9999084473);
-  vector_2_81.name = "Flower";
-  vector_2_81.fills = [
+
+  var vector_74_247 = figma.createVector();
+
+  vector_74_247.resize(200.0, 200.0);
+  vector_74_247.name = "Periwinkle";
+  vector_74_247.fills = [
     {
       type: "SOLID",
       visible: true,
@@ -732,33 +885,32 @@ function createFlower() {
       color: colorArray[(randomShape + counter) % 8],
     },
   ];
-  vector_2_81.strokes = [];
-  vector_2_81.strokeAlign = "INSIDE";
-  vector_2_81.relativeTransform = [
-    [1, 0, -842],
-    [0, 1, -80],
+  vector_74_247.strokes = [];
+  vector_74_247.strokeWeight = 6.267963409423828;
+  vector_74_247.strokeAlign = "INSIDE";
+  vector_74_247.relativeTransform = [
+    [1, 0, 6263],
+    [0, 1, 2456],
   ];
-  vector_2_81.x = Math.random() * selectedFrame.width + 10;
-  vector_2_81.y = Math.random() * selectedFrame.height + 10;
-  vector_2_81.vectorNetwork = {
+  vector_74_247.x = Math.random() * selectedFrame.width + 10;
+  vector_74_247.y = Math.random() * selectedFrame.height + 10;
+  vector_74_247.cornerRadius = 169.23501586914062;
+  vector_74_247.vectorNetwork = {
     regions: [
       {
-        windingRule: "EVENODD",
-        loops: [
-          [0, 1, 2, 3, 4, 5],
-          [6, 7, 8, 9],
-        ],
+        windingRule: "NONZERO",
+        loops: [[7, 6, 5, 4, 3, 2, 1, 0]],
         fills: [
           {
             type: "SOLID",
             visible: true,
             opacity: 1,
             blendMode: "NORMAL",
-            color:
-              colorArray[
-                (Math.floor(Math.random() * 9) + randomShape) %
-                  colorArray.length
-              ],
+            color: {
+              r: 0.9215686321258545,
+              g: 0.34117648005485535,
+              b: 0.34117648005485535,
+            },
           },
         ],
         fillStyleId: "",
@@ -768,165 +920,139 @@ function createFlower() {
       {
         start: 0,
         end: 1,
-        tangentStart: { x: 61.332000732421875, y: -71.19519805908203 },
-        tangentEnd: { x: 91.62799835205078, y: -17.05699920654297 },
-      },
-      {
-        start: 1,
-        end: 2,
-        tangentStart: { x: 91.62799835205078, y: 17.798999786376953 },
-        tangentEnd: { x: 60.59299850463867, y: 71.19599914550781 },
+        tangentStart: { x: 16.19430957992207, y: -2.4372875114157133 },
+        tangentEnd: { x: -2.4372875114157133, y: 16.19430957992207 },
       },
       {
         start: 2,
-        end: 3,
-        tangentStart: { x: 31.03499984741211, y: 88.99400329589844 },
-        tangentEnd: { x: -31.035600662231445, y: 88.25299835205078 },
+        end: 0,
+        tangentStart: { x: -42.34578430658754, y: -6.373155657668831 },
+        tangentEnd: { x: -42.34578430658754, y: 6.373155657668831 },
       },
       {
         start: 3,
-        end: 4,
-        tangentStart: { x: -61.332000732421875, y: 71.19599914550781 },
-        tangentEnd: { x: -91.62816619873047, y: 17.798999786376953 },
+        end: 2,
+        tangentStart: { x: -2.4372875114157133, y: -16.19430957992207 },
+        tangentEnd: { x: 16.19430957992207, y: 2.4372875114157133 },
       },
       {
         start: 4,
-        end: 5,
-        tangentStart: { x: -92.36710357666016, y: -17.05699920654297 },
-        tangentEnd: { x: -61.332000732421875, y: -70.45359802246094 },
+        end: 3,
+        tangentStart: { x: -6.373155657668831, y: 42.34578430658754 },
+        tangentEnd: { x: 6.373155657668831, y: 42.34578430658754 },
       },
       {
         start: 5,
-        end: 0,
-        tangentStart: { x: -31.774499893188477, y: -88.25238800048828 },
-        tangentEnd: { x: 31.03499984741211, y: -88.25238800048828 },
+        end: 4,
+        tangentStart: { x: -16.19430957992207, y: 2.4372875114157133 },
+        tangentEnd: { x: 2.4372875114157133, y: -16.19430957992207 },
       },
       {
         start: 6,
-        end: 7,
-        tangentStart: { x: 7.389999866485596, y: 0 },
-        tangentEnd: { x: 0, y: -7.415999889373779 },
+        end: 5,
+        tangentStart: { x: 42.34578430658754, y: 6.373155657668831 },
+        tangentEnd: { x: 42.34578430658754, y: -6.373155657668831 },
       },
       {
         start: 7,
-        end: 8,
-        tangentStart: { x: 0, y: 7.415999889373779 },
-        tangentEnd: { x: 7.389999866485596, y: 0 },
-      },
-      {
-        start: 8,
-        end: 9,
-        tangentStart: { x: -7.388999938964844, y: 0 },
-        tangentEnd: { x: 0, y: 7.415999889373779 },
-      },
-      {
-        start: 9,
         end: 6,
-        tangentStart: { x: 0, y: -7.415999889373779 },
-        tangentEnd: { x: -7.388999938964844, y: 0 },
+        tangentStart: { x: 2.4372875114157133, y: 16.19430957992207 },
+        tangentEnd: { x: -16.19430957992207, y: -2.4372875114157133 },
+      },
+      {
+        start: 7,
+        end: 1,
+        tangentStart: { x: -6.373155657668831, y: -42.34578430658754 },
+        tangentEnd: { x: 6.373155657668831, y: -42.34578430658754 },
       },
     ],
     vertices: [
       {
-        x: 135.35098266601562,
-        y: 66.18929290771484,
+        x: 31.759342713137453,
+        y: 63.10312894857558,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 164.90798950195312,
-        y: 117.3609848022461,
+        x: 63.10312894857558,
+        y: 31.759333746743856,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 135.35098266601562,
-        y: 168.531982421875,
+        x: 31.759333746743856,
+        y: 136.89686507382868,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 76.97499084472656,
-        y: 168.531982421875,
+        x: 63.10312894857558,
+        y: 168.2406513092668,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 47.41728973388672,
-        y: 117.3609848022461,
+        x: 136.89686507382868,
+        y: 168.24066326445828,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 76.97499084472656,
-        y: 66.18929290771484,
+        x: 168.2406513092668,
+        y: 136.89687702902015,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 105.7929916381836,
-        y: 104.0119857788086,
+        x: 168.24066326445828,
+        y: 63.10312894857558,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
       {
-        x: 119.8329849243164,
-        y: 117.3609848022461,
+        x: 136.89687702902015,
+        y: 31.759342713137453,
         strokeCap: "NONE",
         strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 105.7929916381836,
-        y: 131.4519805908203,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 92.49199676513672,
-        y: 117.3609848022461,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
+        cornerRadius: 169.23501586914062,
         handleMirroring: "NONE",
       },
     ],
   };
-  vector_2_81.vectorPaths = [
+  vector_74_247.vectorPaths = [
     {
-      windingRule: "EVENODD",
-      data: "M 135.35098266601562 66.18929290771484 C 196.6829833984375 -5.0059051513671875 256.5359878540039 100.30398559570312 164.90798950195312 117.3609848022461 C 256.5359878540039 135.15998458862305 195.9439811706543 239.7279815673828 135.35098266601562 168.531982421875 C 166.38598251342773 257.52598571777344 45.93939018249512 256.7849807739258 76.97499084472656 168.531982421875 C 15.642990112304688 239.7279815673828 -44.21087646484375 135.15998458862305 47.41728973388672 117.3609848022461 C -44.94981384277344 100.30398559570312 15.642990112304688 -4.264305114746094 76.97499084472656 66.18929290771484 C 45.200490951538086 -22.063095092773438 166.38598251342773 -22.063095092773438 135.35098266601562 66.18929290771484 Z M 105.7929916381836 104.0119857788086 C 113.18299150466919 104.0119857788086 119.8329849243164 109.94498491287231 119.8329849243164 117.3609848022461 C 119.8329849243164 124.77698469161987 113.18299150466919 131.4519805908203 105.7929916381836 131.4519805908203 C 98.40399169921875 131.4519805908203 92.49199676513672 124.77698469161987 92.49199676513672 117.3609848022461 C 92.49199676513672 109.94498491287231 98.40399169921875 104.0119857788086 105.7929916381836 104.0119857788086 Z",
+      windingRule: "NONZERO",
+      data: "M 63.10312894857558 31.759333746743856 C 69.4762846062444 -10.586450559843684 130.52372137135131 -10.586441593450086 136.89687702902015 31.759342713137453 C 139.33416454043586 47.95365229305952 152.0463536845362 60.66584143715987 168.24066326445828 63.10312894857558 C 210.58644757104582 69.4762846062444 210.58643561585436 130.52372137135131 168.2406513092668 136.89687702902015 C 152.04634172934473 139.33416454043586 139.3341525852444 152.0463536845362 136.89686507382868 168.24066326445828 C 130.52370941615985 210.58644757104582 69.4762846062444 210.58643561585436 63.10312894857558 168.2406513092668 C 60.66584143715987 152.04634172934473 47.953643326665926 139.3341525852444 31.759333746743856 136.89686507382868 C -10.586450559843684 130.52370941615985 -10.586441593450086 69.4762846062444 31.759342713137453 63.10312894857558 C 47.95365229305952 60.66584143715987 60.66584143715987 47.953643326665926 63.10312894857558 31.759333746743856 Z",
     },
   ];
-  vector_2_81.rescale(0.5 + Math.random() * 1.1);
-  vector_2_81.rotation = Math.random() * 360;
-  return vector_2_81;
+
+  vector_74_247.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
+  vector_74_247.rotation = Math.random() * 45;
+  return vector_74_247;
 }
 
 function createSakurai() {
-  var vector_2_83 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_83);
-  vector_2_83.resize(232.9995880127, 225.0001220703);
-  vector_2_83.name = "Asterisk 1";
-  vector_2_83.fills = [
+
+  var vector_73_148 = figma.createVector();
+
+  vector_73_148.resize(174.0, 168.0904541016);
+  vector_73_148.name = "Periwinkle";
+  vector_73_148.fills = [
     {
       type: "SOLID",
       visible: true,
@@ -935,23 +1061,22 @@ function createSakurai() {
       color: colorArray[(randomShape + counter) % 8],
     },
   ];
-  vector_2_83.strokes = [];
-  vector_2_83.strokeAlign = "INSIDE";
-  vector_2_83.relativeTransform = [
-    [1, 0, -863],
-    [0, 1, 234],
+  vector_73_148.strokes = [];
+  vector_73_148.strokeWeight = 5.366353511810303;
+  vector_73_148.strokeAlign = "INSIDE";
+  vector_73_148.relativeTransform = [
+    [1, 0, 4570],
+    [0, 1, 2860.2717285156],
   ];
-  vector_2_83.x = Math.random() * selectedFrame.width + 10;
-  vector_2_83.y = Math.random() * selectedFrame.height + 10;
-  vector_2_83.vectorNetwork = {
+  vector_73_148.x = Math.random() * selectedFrame.width + 10;
+  vector_73_148.y = Math.random() * selectedFrame.height + 10;
+  vector_73_148.vectorNetwork = {
     regions: [
       {
-        windingRule: "NONZERO",
+        windingRule: "EVENODD",
         loops: [
-          [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-            19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-          ],
+          [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+          [10, 11, 12, 13],
         ],
         fills: [
           {
@@ -973,504 +1098,196 @@ function createSakurai() {
       {
         start: 0,
         end: 1,
-        tangentStart: { x: 6.020100116729736, y: 4.372000217437744 },
-        tangentEnd: { x: -6.938300132751465, y: 0 },
-      },
-      {
-        start: 1,
-        end: 2,
-        tangentStart: { x: 10.441800117492676, y: 0 },
-        tangentEnd: { x: -6.631999969482422, y: 8.982999801635742 },
+        tangentStart: { x: 3.8557155837245083, y: -30.151127775241402 },
+        tangentEnd: { x: -3.8557258192317656, y: -30.151130334117997 },
       },
       {
         start: 2,
-        end: 3,
-        tangentStart: { x: 0.01899999938905239, y: -0.01899999938905239 },
-        tangentEnd: { x: -0.017000000923871994, y: 0.020999999716877937 },
+        end: 0,
+        tangentStart: { x: 14.651888104022873, y: 2.7718365412757744 },
+        tangentEnd: { x: -1.8915115055925282, y: 14.791317478201904 },
       },
       {
         start: 3,
-        end: 4,
-        tangentStart: { x: 0.01600000075995922, y: -0.020999999716877937 },
-        tangentEnd: { x: -0.014999999664723873, y: 0.020999999716877937 },
+        end: 2,
+        tangentStart: { x: -27.48394907752785, y: -12.98422603208212 },
+        tangentEnd: { x: -29.866915905190027, y: -5.650206791851688 },
       },
       {
         start: 4,
-        end: 5,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
+        end: 3,
+        tangentStart: { x: 7.163854559089055, y: -13.078223804940942 },
+        tangentEnd: { x: 13.482871628620973, y: 6.369698918589294 },
       },
       {
         start: 5,
-        end: 6,
-        tangentStart: { x: 0.01600000075995922, y: -0.02199999988079071 },
-        tangentEnd: { x: -0.014999999664723873, y: 0.020999999716877937 },
+        end: 4,
+        tangentStart: { x: -20.841739469163066, y: 22.126442153121587 },
+        tangentEnd: { x: -14.603049381145938, y: 26.659123563806812 },
       },
       {
         start: 6,
-        end: 7,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
+        end: 5,
+        tangentStart: { x: -10.224381260645075, y: -10.854621456496245 },
+        tangentEnd: { x: 10.224381260645075, y: -10.854631692002627 },
       },
       {
         start: 7,
-        end: 8,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
+        end: 6,
+        tangentStart: { x: 14.603049381145938, y: 26.659113328300432 },
+        tangentEnd: { x: 20.841744586916693, y: 22.126442153121587 },
       },
       {
         start: 8,
-        end: 9,
-        tangentStart: { x: 0.023000000044703484, y: 0.03500000014901161 },
-        tangentEnd: { x: -0.023000000044703484, y: -0.029999999329447746 },
+        end: 7,
+        tangentStart: { x: -13.482875466936195, y: 6.369698918589294 },
+        tangentEnd: { x: -7.16385200021224, y: -13.078223804940942 },
       },
       {
         start: 9,
-        end: 10,
-        tangentStart: { x: 0.010999999940395355, y: 0.014000000432133675 },
-        tangentEnd: { x: -0.010999999940395355, y: -0.01600000075995922 },
+        end: 8,
+        tangentStart: { x: 29.86692358182047, y: -5.650204232975093 },
+        tangentEnd: { x: 27.48395419528148, y: -12.98422603208212 },
+      },
+      {
+        start: 1,
+        end: 9,
+        tangentStart: { x: 1.8915012700852714, y: 14.791317478201904 },
+        tangentEnd: { x: -14.651882986269245, y: 2.7718365412757744 },
       },
       {
         start: 10,
         end: 11,
-        tangentStart: { x: 11.053999900817871, y: 15.055999755859375 },
-        tangentEnd: { x: -15.118000030517578, y: 10.989999771118164 },
-      },
-      {
-        start: 11,
-        end: 12,
-        tangentStart: { x: 15.135000228881836, y: -10.98900032043457 },
-        tangentEnd: { x: 10.918000221252441, y: 15.173999786376953 },
+        tangentStart: { x: 6.580858298731224e-16, y: 11.855019379257232 },
+        tangentEnd: { x: 11.855020392777591, y: -6.580857736114405e-16 },
       },
       {
         start: 12,
-        end: 13,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
+        end: 10,
+        tangentStart: { x: 11.855020392777591, y: -6.580857736114405e-16 },
+        tangentEnd: { x: -6.580858298731224e-16, y: -11.855019379257232 },
       },
       {
         start: 13,
-        end: 14,
-        tangentStart: { x: -0.019999999552965164, y: -0.03200000151991844 },
-        tangentEnd: { x: 0.02500000037252903, y: 0.02500000037252903 },
+        end: 12,
+        tangentStart: { x: -6.580858298731224e-16, y: -11.855019379257232 },
+        tangentEnd: { x: -11.855020392777591, y: 6.580857736114405e-16 },
       },
       {
-        start: 14,
-        end: 15,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 15,
-        end: 16,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 16,
-        end: 17,
-        tangentStart: { x: 17.82200050354004, y: -5.801000118255615 },
-        tangentEnd: { x: 5.798999786376953, y: 17.82900047302246 },
-      },
-      {
-        start: 17,
-        end: 18,
-        tangentStart: { x: -5.797999858856201, y: -17.827999114990234 },
-        tangentEnd: { x: 17.839000701904297, y: -5.78410005569458 },
-      },
-      {
-        start: 18,
-        end: 19,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 19,
-        end: 20,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 20,
-        end: 21,
-        tangentStart: { x: -0.017999999225139618, y: -18.746999740600586 },
-        tangentEnd: { x: 18.739999771118164, y: 0 },
-      },
-      {
-        start: 21,
-        end: 22,
-        tangentStart: { x: -18.739999771118164, y: 0 },
-        tangentEnd: { x: 0.017000000923871994, y: -18.763999938964844 },
-      },
-      {
-        start: 22,
-        end: 23,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 23,
-        end: 24,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 24,
-        end: 25,
-        tangentStart: { x: -0.014999999664723873, y: 0 },
-        tangentEnd: { x: 0.018400000408291817, y: 0.005200000014156103 },
-      },
-      {
-        start: 25,
-        end: 26,
-        tangentStart: { x: -0.023900000378489494, y: -0.006399999838322401 },
-        tangentEnd: { x: 0.019099999219179153, y: 0.009499999694526196 },
-      },
-      {
-        start: 26,
-        end: 27,
-        tangentStart: { x: -17.804899215698242, y: -5.71589994430542 },
-        tangentEnd: { x: 5.781899929046631, y: -17.795000076293945 },
-      },
-      {
-        start: 27,
-        end: 28,
-        tangentStart: { x: -5.7820000648498535, y: 17.79400062561035 },
-        tangentEnd: { x: -17.736799240112305, y: -5.8520002365112305 },
-      },
-      {
-        start: 28,
-        end: 29,
-        tangentStart: { x: 0.01640000008046627, y: 0.004999999888241291 },
-        tangentEnd: { x: -0.014100000262260437, y: -0.006000000052154064 },
-      },
-      {
-        start: 29,
-        end: 30,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 30,
-        end: 31,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 31,
-        end: 32,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 32,
-        end: 33,
-        tangentStart: { x: 0, y: 0 },
-        tangentEnd: { x: 0, y: 0 },
-      },
-      {
-        start: 33,
-        end: 34,
-        tangentStart: { x: -0.008500000461935997, y: 0.017000000923871994 },
-        tangentEnd: { x: 0.01269999984651804, y: -0.017000000923871994 },
-      },
-      {
-        start: 34,
-        end: 35,
-        tangentStart: { x: -0.012900000438094139, y: 0.017000000923871994 },
-        tangentEnd: { x: 0.008500000461935997, y: -0.017000000923871994 },
-      },
-      {
-        start: 35,
-        end: 0,
-        tangentStart: { x: -10.934800148010254, y: 15.173999786376953 },
-        tangentEnd: { x: -15.135000228881836, y: -10.98900032043457 },
+        start: 11,
+        end: 13,
+        tangentStart: { x: -11.855020392777591, y: 6.580857736114405e-16 },
+        tangentEnd: { x: 6.580858298731224e-16, y: 11.855019379257232 },
       },
     ],
     vertices: [
       {
-        x: 45.52646255493164,
-        y: 218.49798583984375,
+        x: 61.310708940645,
+        y: 22.613350309465094,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 65.47415924072266,
-        y: 224.98001098632812,
+        x: 112.689291059355,
+        y: 22.613345191711904,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 92.85295867919922,
-        y: 211.2169952392578,
+        x: 30.807344076459007,
+        y: 44.775335258498075,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 92.9069595336914,
-        y: 211.15699768066406,
+        x: 14.930484537736845,
+        y: 93.63926401228684,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 92.95396423339844,
-        y: 211.093994140625,
+        x: 26.58173005484938,
+        y: 129.49811188974022,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 92.97695922851562,
-        y: 211.06100463867188,
+        x: 68.14787937348814,
+        y: 159.69769711107045,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 93.02296447753906,
-        y: 210.99600219726562,
+        x: 105.85211550875825,
+        y: 159.69769711107045,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 116.49095916748047,
-        y: 178.72500610351562,
+        x: 147.418264827397,
+        y: 129.49811188974022,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 139.95896911621094,
-        y: 210.99600219726562,
+        x: 159.06951674170156,
+        y: 93.63926401228684,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 140.0289764404297,
-        y: 211.08799743652344,
+        x: 143.19264824691055,
+        y: 44.775335258498075,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 140.06097412109375,
-        y: 211.1320037841797,
+        x: 108.46457520350718,
+        y: 90.04507618176444,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 187.4729766845703,
-        y: 218.5150146484375,
+        x: 86.99916068840493,
+        y: 111.51048886172565,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 195.073974609375,
-        y: 171.10400390625,
+        x: 86.99916068840493,
+        y: 68.57966861955643,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
         handleMirroring: "NONE",
       },
       {
-        x: 195.0499725341797,
-        y: 171.0659942626953,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 194.9889678955078,
-        y: 170.98500061035156,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 171.5719757080078,
-        y: 138.6959991455078,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 209.511962890625,
-        y: 126.34599304199219,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 231.3299560546875,
-        y: 83.47599792480469,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 188.47596740722656,
-        y: 61.633399963378906,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 150.53697204589844,
-        y: 73.93299865722656,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 150.5199737548828,
-        y: 34.00640106201172,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 116.5079574584961,
-        y: 0,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 82.49696350097656,
-        y: 34.023399353027344,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 82.46295928955078,
-        y: 73.91600036621094,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 44.52326583862305,
-        y: 61.616302490234375,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 44.4715690612793,
-        y: 61.60780334472656,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 44.4040641784668,
-        y: 61.582298278808594,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 1.6688648462295532,
-        y: 83.45999908447266,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 23.35106658935547,
-        y: 126.27799987792969,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 23.39626693725586,
-        y: 126.29499816894531,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 23.45876693725586,
-        y: 126.31900024414062,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 23.487266540527344,
-        y: 126.32899475097656,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 61.40976333618164,
-        y: 138.6790008544922,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 37.992862701416016,
-        y: 170.96800231933594,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 37.95906448364258,
-        y: 171.0189971923828,
-        strokeCap: "NONE",
-        strokeJoin: "MITER",
-        cornerRadius: 0,
-        handleMirroring: "NONE",
-      },
-      {
-        x: 37.92506790161133,
-        y: 171.07000732421875,
+        x: 65.53374105554904,
+        y: 90.04507618176444,
         strokeCap: "NONE",
         strokeJoin: "MITER",
         cornerRadius: 0,
@@ -1478,23 +1295,24 @@ function createSakurai() {
       },
     ],
   };
-  vector_2_83.vectorPaths = [
+  vector_73_148.vectorPaths = [
     {
-      windingRule: "NONZERO",
-      data: "M 45.52646255493164 218.49798583984375 C 51.54656267166138 222.8699860572815 58.53585910797119 224.98001098632812 65.47415924072266 224.98001098632812 C 75.91595935821533 224.98001098632812 86.2209587097168 220.19999504089355 92.85295867919922 211.2169952392578 C 92.87195867858827 211.19799523986876 92.88995953276753 211.17799768038094 92.9069595336914 211.15699768066406 C 92.92295953445137 211.13599768094718 92.93896423373371 211.11499414034188 92.95396423339844 211.093994140625 L 92.97695922851562 211.06100463867188 C 92.99295922927558 211.03900463879108 93.00796447787434 211.0170021969825 93.02296447753906 210.99600219726562 L 116.49095916748047 178.72500610351562 L 139.95896911621094 210.99600219726562 C 139.98196911625564 211.03100219741464 140.00597644038498 211.057997437194 140.0289764404297 211.08799743652344 C 140.03997644037008 211.10199743695557 140.04997412115335 211.11600378341973 140.06097412109375 211.1320037841797 C 151.11497402191162 226.18800354003906 172.35497665405273 229.50501441955566 187.4729766845703 218.5150146484375 C 202.60797691345215 207.52601432800293 205.99197483062744 186.27800369262695 195.073974609375 171.10400390625 L 195.0499725341797 171.0659942626953 C 195.02997253462672 171.0339942611754 195.01396789588034 171.0100006107241 194.9889678955078 170.98500061035156 L 171.5719757080078 138.6959991455078 L 209.511962890625 126.34599304199219 C 227.33396339416504 120.54499292373657 237.12895584106445 101.30499839782715 231.3299560546875 83.47599792480469 C 225.5319561958313 65.64799880981445 206.31496810913086 55.849299907684326 188.47596740722656 61.633399963378906 L 150.53697204589844 73.93299865722656 L 150.5199737548828 34.00640106201172 C 150.50197375565767 15.259401321411133 135.24795722961426 0 116.5079574584961 0 C 97.76795768737793 0 82.51396350190043 15.2593994140625 82.49696350097656 34.023399353027344 L 82.46295928955078 73.91600036621094 L 44.52326583862305 61.616302490234375 C 44.50826583895832 61.616302490234375 44.48996906168759 61.61300334474072 44.4715690612793 61.60780334472656 C 44.44766906090081 61.60140334488824 44.423164177685976 61.59179827850312 44.4040641784668 61.582298278808594 C 26.599164962768555 55.866398334503174 7.450764775276184 65.66499900817871 1.6688648462295532 83.45999908447266 C -4.1131352186203 101.25399971008301 5.614267349243164 120.42599964141846 23.35106658935547 126.27799987792969 C 23.367466589435935 126.28299987781793 23.3821669369936 126.28899816889316 23.39626693725586 126.29499816894531 L 23.45876693725586 126.31900024414062 L 23.487266540527344 126.32899475097656 L 61.40976333618164 138.6790008544922 L 37.992862701416016 170.96800231933594 C 37.98436270095408 170.9850023202598 37.971764483489096 171.00199719145894 37.95906448364258 171.0189971923828 C 37.946164483204484 171.03599719330668 37.933567902073264 171.05300732329488 37.92506790161133 171.07000732421875 C 26.990267753601074 186.2440071105957 30.391462326049805 207.50898551940918 45.52646255493164 218.49798583984375 Z",
+      windingRule: "EVENODD",
+      data: "M 112.689291059355 22.613345191711904 C 108.83356524012324 -7.5377851424060935 65.1664245243695 -7.537777465776308 61.310708940645 22.613350309465094 C 59.419197435052475 37.404667787666995 45.45923218048188 47.54717179977385 30.807344076459007 44.775335258498075 C 0.9404281712689802 39.12512846664639 -12.553464539791005 80.65503798020472 14.930484537736845 93.63926401228684 C 28.41335616635782 100.00896293087614 33.74558461393843 116.41988808479927 26.58173005484938 129.49811188974022 C 11.978680673703442 156.15723545354703 47.30613990432507 181.82413926419204 68.14787937348814 159.69769711107045 C 78.37226063413321 148.84306541906784 95.62773424811317 148.84307565457422 105.85211550875825 159.69769711107045 C 126.69386009567494 181.82413926419204 162.02131420854295 156.15722521804065 147.418264827397 129.49811188974022 C 140.25441282718475 116.41988808479927 145.58664127476536 100.00896293087614 159.06951674170156 93.63926401228684 C 186.55347093698305 80.65503798020472 173.059571828731 39.12513102552298 143.19264824691055 44.775335258498075 C 128.5407652606413 47.54717179977385 114.58079232944027 37.404662669913805 112.689291059355 22.613345191711904 Z M 86.99916068840493 111.51048886172565 C 98.85418108118252 111.51048886172565 108.46457520350718 101.90009556102167 108.46457520350718 90.04507618176444 C 108.46457520350718 78.19005680250721 98.85418108118252 68.57966861955643 86.99916068840493 68.57966861955643 C 75.14414029562734 68.57966861955643 65.53374105554904 78.19005680250721 65.53374105554904 90.04507618176444 C 65.53374105554904 101.90009556102167 75.14414029562734 111.51048886172565 86.99916068840493 111.51048886172565 Z",
     },
   ];
-  vector_2_83.rescale(0.5 + Math.random() * 1.1);
-  vector_2_83.rotation = Math.random() * 360;
-  return vector_2_83;
+
+  vector_73_148.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
+  vector_73_148.rotation = Math.random() * 45;
+  return vector_73_148;
 }
 
 function createStar1() {
   var vector_2_88 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_88);
+
   vector_2_88.resize(268.0000305176, 268.0000305176);
-  vector_2_88.name = "Soft Star";
+  vector_2_88.name = "Star";
   vector_2_88.fills = [
     {
       type: "SOLID",
@@ -1768,7 +1586,7 @@ function createStar1() {
       data: "M 130.4240264892578 3.1766247749328613 C 130.92702651023865 -1.0588750839233398 137.0730345249176 -1.0588750839233398 137.57603454589844 3.1766247749328613 L 141.7920379638672 38.70862579345703 C 147.23603773117065 84.59002685546875 183.41003036499023 120.76401567459106 229.29103088378906 126.20801544189453 L 264.8230285644531 130.4240264892578 C 269.0590286254883 130.92702651023865 269.0590286254883 137.0730345249176 264.8230285644531 137.57603454589844 L 229.29103088378906 141.7920379638672 C 183.41003036499023 147.23603773117065 147.23603773117065 183.41003036499023 141.7920379638672 229.29103088378906 L 137.57603454589844 264.8230285644531 C 137.0730345249176 269.0590286254883 130.92702651023865 269.0590286254883 130.4240264892578 264.8230285644531 L 126.20801544189453 229.29103088378906 C 120.76401567459106 183.41003036499023 84.59002685546875 147.23603773117065 38.70862579345703 141.7920379638672 L 3.1766247749328613 137.57603454589844 C -1.0588750839233398 137.0730345249176 -1.0588750839233398 130.92702651023865 3.1766247749328613 130.4240264892578 L 38.70862579345703 126.20801544189453 C 84.59002685546875 120.76401567459106 120.76401567459106 84.59002685546875 126.20801544189453 38.70862579345703 L 130.4240264892578 3.1766247749328613 Z",
     },
   ];
-  vector_2_88.rescale(0.5 + Math.random() * 1.1);
+  vector_2_88.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_88.rotation = Math.random() * 360;
   return vector_2_88;
 }
@@ -1776,9 +1594,9 @@ function createStar1() {
 function createSun() {
   var vector_2_89 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_89);
+
   vector_2_89.resize(248.0, 248.0);
-  vector_2_89.name = "Dawn";
+  vector_2_89.name = "Sun";
   vector_2_89.fills = [
     {
       type: "SOLID",
@@ -2289,7 +2107,7 @@ function createSun() {
       data: "M 124 0 L 124.02400207519531 123.87800598144531 L 171.4530029296875 9.438899993896484 L 124.06900024414062 123.89700317382812 L 211.68099975585938 36.31880187988281 L 124.10299682617188 123.93099975585938 L 238.56100463867188 76.5469970703125 L 124.12199401855469 123.97599792480469 L 248 124 L 124.12199401855469 124.02400207519531 L 238.56100463867188 171.4530029296875 L 124.10299682617188 124.06900024414062 L 211.68099975585938 211.68099975585938 L 124.06900024414062 124.10299682617188 L 171.4530029296875 238.56100463867188 L 124.02400207519531 124.12199401855469 L 124 248 L 123.97599792480469 124.12199401855469 L 76.5469970703125 238.56100463867188 L 123.93099975585938 124.10299682617188 L 36.31880187988281 211.68099975585938 L 123.89700317382812 124.06900024414062 L 9.438899993896484 171.4530029296875 L 123.87800598144531 124.02400207519531 L 0 124 L 123.87800598144531 123.97599792480469 L 9.438899993896484 76.5469970703125 L 123.89700317382812 123.93099975585938 L 36.31880187988281 36.31880187988281 L 123.93099975585938 123.89700317382812 L 76.5469970703125 9.438899993896484 L 123.97599792480469 123.87800598144531 L 124 0 Z",
     },
   ];
-  vector_2_89.rescale(0.5 + Math.random() * 1.1);
+  vector_2_89.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_89.rotation = Math.random() * 360;
   return vector_2_89;
 }
@@ -2297,9 +2115,9 @@ function createSun() {
 function createSpring() {
   var vector_2_84 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_84);
+
   vector_2_84.resize(119.0, 254.0);
-  vector_2_84.name = "Spiral 3";
+  vector_2_84.name = "Spring";
   vector_2_84.strokes = [
     {
       type: "SOLID",
@@ -2714,7 +2532,7 @@ function createSpring() {
       data: "M 76.26100158691406 0 C 34.143001556396484 0 0 12.713500022888184 0 28.396400451660156 C 0 44.07930088043213 34.143001556396484 56.79290008544922 76.26100158691406 56.79290008544922 C 99.8650016784668 56.79290008544922 119 51.4111008644104 119 44.772300720214844 C 119 38.13350057601929 99.8650016784668 32.75170135498047 76.26100158691406 32.75170135498047 C 34.143001556396484 32.75170135498047 0 45.46520137786865 0 61.148101806640625 C 0 76.8311014175415 34.143001556396484 89.54499816894531 76.26100158691406 89.54499816894531 C 99.8650016784668 89.54499816894531 119 84.16300201416016 119 77.52400207519531 C 119 70.88520193099976 99.8650016784668 65.50340270996094 76.26100158691406 65.50340270996094 C 34.143001556396484 65.50340270996094 0 78.294997215271 0 94.0739974975586 C 0 109.85299777984619 34.143001556396484 122.64500427246094 76.26100158691406 122.64500427246094 C 99.8650016784668 122.64500427246094 119 117.26299285888672 119 110.62399291992188 C 119 103.98499298095703 99.8650016784668 98.60399627685547 76.26100158691406 98.60399627685547 C 34.143001556396484 98.60399627685547 0 111.31700038909912 0 127 C 0 142.68299961090088 34.143001556396484 155.39599609375 76.26100158691406 155.39599609375 C 99.8650016784668 155.39599609375 119 150.01500701904297 119 143.37600708007812 C 119 136.73700714111328 99.8650016784668 131.35499572753906 76.26100158691406 131.35499572753906 C 34.143001556396484 131.35499572753906 0 144.0689992904663 0 159.7519989013672 C 0 175.43499851226807 34.143001556396484 188.1479949951172 76.26100158691406 188.1479949951172 C 99.8650016784668 188.1479949951172 119 182.7660059928894 119 176.1280059814453 C 119 169.48900604248047 99.8650016784668 164.10699462890625 76.26100158691406 164.10699462890625 C 34.143001556396484 164.10699462890625 0 176.82100582122803 0 192.5030059814453 C 0 208.1860055923462 34.143001556396484 220.89999389648438 76.26100158691406 220.89999389648438 C 99.8650016784668 220.89999389648438 119 215.51799774169922 119 208.87899780273438 C 119 202.24099779129028 99.8650016784668 196.85899353027344 76.26100158691406 196.85899353027344 C 34.143001556396484 196.85899353027344 0 209.6500005722046 0 225.4290008544922 C 0 241.20800113677979 34.143001556396484 254 76.26100158691406 254",
     },
   ];
-  vector_2_84.rescale(0.5 + Math.random() * 1.1);
+  vector_2_84.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_84.rotation = Math.random() * 360;
   return vector_2_84;
 }
@@ -2722,9 +2540,9 @@ function createSpring() {
 function createStar2() {
   var vector_2_82 = figma.createVector();
   const selectedFrame = figma.currentPage.selection[0] as FrameNode;
-  selectedFrame.appendChild(vector_2_82);
+
   vector_2_82.resize(218.0, 218.0);
-  vector_2_82.name = "Portal";
+  vector_2_82.name = "Star2";
   vector_2_82.fills = [
     {
       type: "SOLID",
@@ -2830,7 +2648,608 @@ function createStar2() {
       data: "M 109 218 C 108.78200000524521 157.875 60.064998626708984 109.20199584960938 0 109.20199584960938 C 60.19900131225586 109.20199584960938 109 60.310001373291016 109 0 C 109.21699999272823 60.125 157.93500137329102 108.79800415039062 218 108.79800415039062 C 157.79999923706055 108.79800415039062 109 157.68999862670898 109 218 Z",
     },
   ];
-  vector_2_82.rescale(0.5 + Math.random() * 1.1);
+  vector_2_82.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
   vector_2_82.rotation = Math.random() * 360;
   return vector_2_82;
+}
+
+function createPill() {
+  var rectangle_15_2418 = figma.createRectangle();
+  const selectedFrame = figma.currentPage.selection[0] as FrameNode;
+
+  rectangle_15_2418.resize(244.0, 93.0);
+  rectangle_15_2418.name = "Pill";
+  rectangle_15_2418.fills = [
+    {
+      type: "SOLID",
+      visible: true,
+      opacity: 1,
+      blendMode: "NORMAL",
+      color: colorArray[(randomShape + counter) % 8],
+    },
+  ];
+  rectangle_15_2418.relativeTransform = [
+    [1, 0, 4535],
+    [0, 1, 2728],
+  ];
+  rectangle_15_2418.x = Math.random() * selectedFrame.width + 10;
+  rectangle_15_2418.y = Math.random() * selectedFrame.height + 10;
+  rectangle_15_2418.cornerRadius = 142;
+  rectangle_15_2418.strokeTopWeight = 1;
+  rectangle_15_2418.strokeBottomWeight = 1;
+  rectangle_15_2418.strokeLeftWeight = 1;
+  rectangle_15_2418.strokeRightWeight = 1;
+  rectangle_15_2418.rescale(
+    lowerScaleFactor + Math.random() * higherScaleFactor
+  );
+  rectangle_15_2418.rotation = Math.random() * 360;
+  return rectangle_15_2418;
+}
+
+function createSemiCircle() {
+  var vector_68_3 = figma.createVector();
+  const selectedFrame = figma.currentPage.selection[0] as FrameNode;
+
+  vector_68_3.resize(200.0, 100.0);
+  vector_68_3.name = "Semicircle";
+  vector_68_3.fills = [
+    {
+      type: "SOLID",
+      visible: true,
+      opacity: 1,
+      blendMode: "NORMAL",
+      color: colorArray[(randomShape + counter) % 8],
+    },
+  ];
+  vector_68_3.strokes = [];
+  vector_68_3.strokeWeight = 1.9999998807907104;
+  vector_68_3.strokeAlign = "INSIDE";
+  vector_68_3.relativeTransform = [
+    [1, 0, 4302],
+    [0, 1, 2971],
+  ];
+  vector_68_3.x = Math.random() * selectedFrame.width + 10;
+  vector_68_3.y = Math.random() * selectedFrame.height + 10;
+  vector_68_3.vectorNetwork = {
+    regions: [
+      {
+        windingRule: "NONZERO",
+        loops: [[0, 1, 2, 3, 4]],
+        fills: [
+          {
+            type: "SOLID",
+            visible: true,
+            opacity: 1,
+            blendMode: "NORMAL",
+            color: {
+              r: 0.8509804010391235,
+              g: 0.8509804010391235,
+              b: 0.8509804010391235,
+            },
+          },
+        ],
+        fillStyleId: "",
+      },
+    ],
+    segments: [
+      {
+        start: 0,
+        end: 1,
+        tangentStart: { x: -2.842170943040401e-14, y: 26.521648406982422 },
+        tangentEnd: { x: 18.75363540649414, y: -18.753637313842773 },
+      },
+      {
+        start: 1,
+        end: 2,
+        tangentStart: { x: -18.75363540649414, y: 18.753637313842773 },
+        tangentEnd: { x: 26.521648406982422, y: -0.000002002328756134375 },
+      },
+      {
+        start: 2,
+        end: 3,
+        tangentStart: { x: -26.521648406982422, y: 0.000002002328756134375 },
+        tangentEnd: { x: 18.753639221191406, y: 18.75363540649414 },
+      },
+      {
+        start: 3,
+        end: 4,
+        tangentStart: { x: -18.753639221191406, y: -18.75363540649414 },
+        tangentEnd: { x: 0.00000400465751226875, y: 26.521648406982422 },
+      },
+      {
+        start: 4,
+        end: 0,
+        tangentStart: { x: 0, y: 0 },
+        tangentEnd: { x: 0, y: 0 },
+      },
+    ],
+    vertices: [
+      {
+        x: 200,
+        y: 0,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 170.71067810058594,
+        y: 70.71067810058594,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 100.00000762939453,
+        y: 100,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 29.289329528808594,
+        y: 70.71068572998047,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 0,
+        y: 0.000015099580195965245,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+    ],
+  };
+  vector_68_3.vectorPaths = [
+    {
+      windingRule: "NONZERO",
+      data: "M 200 0 C 199.99999999999997 26.521648406982422 189.46431350708008 51.957040786743164 170.71067810058594 70.71067810058594 C 151.9570426940918 89.46431541442871 126.52165603637695 99.99999799767124 100.00000762939453 100 C 73.47835922241211 100.00000200232876 48.04296875 89.46432113647461 29.289329528808594 70.71068572998047 C 10.535690307617188 51.95705032348633 0.00000400465751226875 26.521663506562618 0 0.000015099580195965245 L 200 0 Z",
+    },
+  ];
+
+  vector_68_3.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
+  vector_68_3.rotation = Math.random() * 360;
+  return vector_68_3;
+}
+
+function createTube() {
+  const selectedFrame = figma.currentPage.selection[0] as FrameNode;
+
+  var vector_71_21 = figma.createVector();
+  vector_71_21.resize(398.0, 199.0000152588);
+  vector_71_21.name = "Tube";
+  vector_71_21.fills = [
+    {
+      type: "SOLID",
+      visible: true,
+      opacity: 1,
+      blendMode: "NORMAL",
+      color: colorArray[(randomShape + counter) % 8],
+    },
+  ];
+  vector_71_21.strokes = [];
+  vector_71_21.strokeAlign = "INSIDE";
+  vector_71_21.relativeTransform = [
+    [1, 0, 4418],
+    [0, 1, 3370],
+  ];
+  vector_71_21.x = Math.random() * selectedFrame.width + 10;
+  vector_71_21.y = Math.random() * selectedFrame.height + 10;
+  vector_71_21.vectorNetwork = {
+    regions: [
+      {
+        windingRule: "NONZERO",
+        loops: [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]],
+        fills: [
+          {
+            type: "SOLID",
+            visible: true,
+            opacity: 1,
+            blendMode: "NORMAL",
+            color: {
+              r: 0.6078431606292725,
+              g: 0.3176470696926117,
+              b: 0.8784313797950745,
+            },
+          },
+        ],
+        fillStyleId: "",
+      },
+    ],
+    segments: [
+      {
+        start: 0,
+        end: 1,
+        tangentStart: { x: 0, y: 26.133052825927734 },
+        tangentEnd: { x: 10.000686645507812, y: -24.1437931060791 },
+      },
+      {
+        start: 1,
+        end: 2,
+        tangentStart: { x: -10.000686645507812, y: 24.1437931060791 },
+        tangentEnd: { x: 18.478858947753906, y: -18.478858947753906 },
+      },
+      {
+        start: 2,
+        end: 3,
+        tangentStart: { x: -18.478858947753906, y: 18.478858947753906 },
+        tangentEnd: { x: 24.1437931060791, y: -10.000685691833496 },
+      },
+      {
+        start: 3,
+        end: 4,
+        tangentStart: { x: -24.1437931060791, y: 10.000685691833496 },
+        tangentEnd: { x: 26.133052825927734, y: 0.0000011423120440667844 },
+      },
+      {
+        start: 4,
+        end: 5,
+        tangentStart: { x: -26.133052825927734, y: -0.0000011423120440667844 },
+        tangentEnd: { x: 24.1437931060791, y: 10.000687599182129 },
+      },
+      {
+        start: 5,
+        end: 6,
+        tangentStart: { x: -24.1437931060791, y: -10.000687599182129 },
+        tangentEnd: { x: 18.478857040405273, y: 18.47886085510254 },
+      },
+      {
+        start: 6,
+        end: 7,
+        tangentStart: { x: -18.478857040405273, y: -18.47886085510254 },
+        tangentEnd: { x: 10.00068473815918, y: 24.1437931060791 },
+      },
+      {
+        start: 7,
+        end: 8,
+        tangentStart: { x: -10.00068473815918, y: -24.1437931060791 },
+        tangentEnd: { x: -0.000002284624088133569, y: 26.133052825927734 },
+      },
+      {
+        start: 8,
+        end: 9,
+        tangentStart: { x: 0, y: 0 },
+        tangentEnd: { x: 0, y: 0 },
+      },
+      {
+        start: 9,
+        end: 10,
+        tangentStart: { x: -0.0000015341616972364136, y: 17.548763275146484 },
+        tangentEnd: { x: -6.7156195640563965, y: -16.21294403076172 },
+      },
+      {
+        start: 10,
+        end: 11,
+        tangentStart: { x: 6.7156195640563965, y: 16.21294403076172 },
+        tangentEnd: { x: -12.408848762512207, y: -12.40885066986084 },
+      },
+      {
+        start: 11,
+        end: 12,
+        tangentStart: { x: 12.408848762512207, y: 12.40885066986084 },
+        tangentEnd: { x: -16.212942123413086, y: -6.7156219482421875 },
+      },
+      {
+        start: 12,
+        end: 13,
+        tangentStart: { x: 16.212942123413086, y: 6.7156219482421875 },
+        tangentEnd: { x: -17.548763275146484, y: -7.670807917747879e-7 },
+      },
+      {
+        start: 13,
+        end: 14,
+        tangentStart: { x: 17.548763275146484, y: 7.670809054616257e-7 },
+        tangentEnd: { x: -16.21294403076172, y: 6.715620517730713 },
+      },
+      {
+        start: 14,
+        end: 15,
+        tangentStart: { x: 16.21294403076172, y: -6.715620517730713 },
+        tangentEnd: { x: -12.408849716186523, y: 12.408848762512207 },
+      },
+      {
+        start: 15,
+        end: 16,
+        tangentStart: { x: 12.408849716186523, y: -12.408848762512207 },
+        tangentEnd: { x: -6.715620994567871, y: 16.212942123413086 },
+      },
+      {
+        start: 16,
+        end: 17,
+        tangentStart: { x: 6.715620994567871, y: -16.212942123413086 },
+        tangentEnd: { x: 0, y: 17.548763275146484 },
+      },
+      {
+        start: 17,
+        end: 0,
+        tangentStart: { x: 0, y: 0 },
+        tangentEnd: { x: 0, y: 0 },
+      },
+    ],
+    vertices: [
+      {
+        x: 398,
+        y: 0.000017397132978658192,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 382.8520202636719,
+        y: 76.15402221679688,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 339.7142333984375,
+        y: 140.71426391601562,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 275.15399169921875,
+        y: 183.85205078125,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 198.99998474121094,
+        y: 199.00001525878906,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 122.84598541259766,
+        y: 183.85203552246094,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 58.28573989868164,
+        y: 140.71426391601562,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 15.147967338562012,
+        y: 76.15400695800781,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 9.094947017729282e-13,
+        y: 0,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 65.36831665039062,
+        y: 0.000005714680355595192,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 75.54042053222656,
+        y: 51.13863754272461,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 104.50812530517578,
+        y: 94.49188232421875,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 147.86135864257812,
+        y: 123.4595947265625,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 199,
+        y: 133.63169860839844,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 250.1386260986328,
+        y: 123.4595947265625,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 293.49188232421875,
+        y: 94.49188995361328,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 322.4595642089844,
+        y: 51.138648986816406,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+      {
+        x: 332.6316833496094,
+        y: 0.000017397132978658192,
+        strokeCap: "NONE",
+        strokeJoin: "MITER",
+        cornerRadius: 0,
+        handleMirroring: "NONE",
+      },
+    ],
+  };
+  vector_71_21.vectorPaths = [
+    {
+      windingRule: "NONZERO",
+      data: "M 398 0.000017397132978658192 C 398 26.133070223060713 392.8527069091797 52.01022911071777 382.8520202636719 76.15402221679688 C 372.85133361816406 100.29781532287598 358.1930923461914 122.23540496826172 339.7142333984375 140.71426391601562 C 321.2353744506836 159.19312286376953 299.29778480529785 173.8513650894165 275.15399169921875 183.85205078125 C 251.01019859313965 193.8527364730835 225.13303756713867 199.0000164011011 198.99998474121094 199.00001525878906 C 172.8669319152832 199.00001411647702 146.98977851867676 193.85272312164307 122.84598541259766 183.85203552246094 C 98.70219230651855 173.8513479232788 76.76459693908691 159.19312477111816 58.28573989868164 140.71426391601562 C 39.80688285827637 122.23540306091309 25.14865207672119 100.29780006408691 15.147967338562012 76.15400695800781 C 5.147282600402832 52.01021385192871 -0.000002284623178638867 26.133052825927734 9.094947017729282e-13 0 L 65.36831665039062 0.000005714680355595192 C 65.36831511622893 17.54876898982684 68.82480096817017 34.92569351196289 75.54042053222656 51.13863754272461 C 82.25604009628296 67.35158157348633 92.09927654266357 82.08303165435791 104.50812530517578 94.49188232421875 C 116.91697406768799 106.90073299407959 131.64841651916504 116.74397277832031 147.86135864257812 123.4595947265625 C 164.0743007659912 130.1752166748047 181.45123672485352 133.63169784131765 199 133.63169860839844 C 216.54876327514648 133.63169937547934 233.9256820678711 130.1752152442932 250.1386260986328 123.4595947265625 C 266.35157012939453 116.74397420883179 281.0830326080322 106.90073871612549 293.49188232421875 94.49188995361328 C 305.9007320404053 82.08304119110107 315.7439432144165 67.35159111022949 322.4595642089844 51.138648986816406 C 329.17518520355225 34.92570686340332 332.6316833496094 17.548780672279463 332.6316833496094 0.000017397132978658192 L 398 0.000017397132978658192 Z",
+    },
+  ];
+
+  vector_71_21.rescale(lowerScaleFactor + Math.random() * higherScaleFactor);
+  vector_71_21.rotation = Math.random() * 360;
+  return vector_71_21;
+}
+
+function createAutoLayoutFrame(position: string) {
+  let tempFrame = figma.createFrame() as FrameNode;
+  const selectedFrame = figma.currentPage.selection[0] as FrameNode;
+  if (position === "top") {
+    tempFrame.resize(selectedFrame.width * overflowFactor, 277.084777832);
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.name = "Top";
+    tempFrame.relativeTransform = [
+      [1, 0, 17],
+      [0, 1, -106],
+    ];
+    tempFrame.x = 17;
+    tempFrame.y = -106;
+    tempFrame.fills = [];
+    tempFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+    tempFrame.counterAxisAlignItems = "CENTER";
+    tempFrame.primaryAxisSizingMode = "FIXED";
+    tempFrame.strokeTopWeight = 1;
+    tempFrame.strokeBottomWeight = 1;
+    tempFrame.strokeLeftWeight = 1;
+    tempFrame.strokeRightWeight = 1;
+    tempFrame.clipsContent = false;
+    tempFrame.expanded = false;
+    tempFrame.layoutMode = "HORIZONTAL";
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.itemSpacing = 283;
+  } else if (position === "down") {
+    tempFrame.resize(selectedFrame.width * overflowFactor, 558.1932983398);
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.name = "Down";
+    tempFrame.relativeTransform = [
+      [1, 0, -113],
+      [0, 1, 775],
+    ];
+    tempFrame.x = -113;
+    tempFrame.y = 775;
+    tempFrame.fills = [];
+    tempFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+    tempFrame.counterAxisAlignItems = "CENTER";
+    tempFrame.primaryAxisSizingMode = "FIXED";
+    tempFrame.strokeTopWeight = 1;
+    tempFrame.strokeBottomWeight = 1;
+    tempFrame.strokeLeftWeight = 1;
+    tempFrame.strokeRightWeight = 1;
+    tempFrame.clipsContent = false;
+    tempFrame.layoutMode = "HORIZONTAL";
+    tempFrame.counterAxisSizingMode = "AUTO";
+  } else if (position === "left") {
+    tempFrame.resize(505.5918579102, selectedFrame.height * overflowFactor);
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.name = "Left";
+    tempFrame.relativeTransform = [
+      [1, 0, -205],
+      [0, 1, -248],
+    ];
+    tempFrame.x = -205;
+    tempFrame.y = -248;
+    tempFrame.fills = [];
+    tempFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+    tempFrame.counterAxisAlignItems = "CENTER";
+    tempFrame.primaryAxisSizingMode = "FIXED";
+    tempFrame.strokeTopWeight = 1;
+    tempFrame.strokeBottomWeight = 1;
+    tempFrame.strokeLeftWeight = 1;
+    tempFrame.strokeRightWeight = 1;
+    tempFrame.clipsContent = false;
+    tempFrame.layoutMode = "VERTICAL";
+    tempFrame.counterAxisSizingMode = "AUTO";
+  } else if (position === "right") {
+    tempFrame.resize(359.4046936035, selectedFrame.height * overflowFactor);
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.name = "Right";
+    tempFrame.relativeTransform = [
+      [1, 0, 1707],
+      [0, 1, -301],
+    ];
+    tempFrame.x = 1707;
+    tempFrame.y = -301;
+    tempFrame.fills = [];
+    tempFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+    tempFrame.counterAxisAlignItems = "CENTER";
+    tempFrame.primaryAxisSizingMode = "FIXED";
+    tempFrame.strokeTopWeight = 1;
+    tempFrame.strokeBottomWeight = 1;
+    tempFrame.strokeLeftWeight = 1;
+    tempFrame.strokeRightWeight = 1;
+    tempFrame.clipsContent = false;
+    tempFrame.constraints = { horizontal: "MAX", vertical: "MIN" };
+    tempFrame.layoutMode = "VERTICAL";
+    tempFrame.counterAxisSizingMode = "AUTO";
+    tempFrame.itemSpacing = 14;
+  }
+  return tempFrame;
+}
+
+function createPatternLayoutFrame() {
+  let tempFrame = figma.createFrame() as FrameNode;
+  const selectedFrame = figma.currentPage.selection[0] as FrameNode;
+  tempFrame.resize(selectedFrame.width, 277.084777832);
+  tempFrame.counterAxisSizingMode = "AUTO";
+  tempFrame.name = "Frame 26";
+  tempFrame.relativeTransform = [
+    [1, 0, 17],
+    [0, 1, -106],
+  ];
+  tempFrame.x = 17;
+  tempFrame.y = -106;
+  tempFrame.fills = [];
+  tempFrame.primaryAxisAlignItems = "SPACE_BETWEEN";
+  tempFrame.counterAxisAlignItems = "CENTER";
+  tempFrame.primaryAxisSizingMode = "FIXED";
+  tempFrame.strokeTopWeight = 1;
+  tempFrame.strokeBottomWeight = 1;
+  tempFrame.strokeLeftWeight = 1;
+  tempFrame.strokeRightWeight = 1;
+  tempFrame.clipsContent = false;
+  tempFrame.expanded = false;
+  tempFrame.layoutMode = "HORIZONTAL";
+  tempFrame.counterAxisSizingMode = "AUTO";
+  tempFrame.itemSpacing = 283;
+  return tempFrame;
 }

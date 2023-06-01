@@ -1,39 +1,210 @@
-<h2>Rectangle Creator</h2>
-<p>Count: <input id="count" value="5" style="visibility: hidden" /></p>
-<p id="selectionMessage">Nothing Selected. Select something first!!</p>
-<button id="create" style="visibility: hidden">Create</button>
-<button id="cancel" style="visibility: hidden">Cancel</button>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/gh/thomas-lowry/figma-plugin-ds/dist/figma-plugin-ds.css"
+/>
+
+<style>
+  .container__main {
+    padding: 1rem;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .density__container {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .button__container {
+    width: 60%;
+  }
+</style>
+
+<div class="container__main">
+  <div id="pattern" class="pattern__container">
+    Pattern Mode
+    <div class="radio">
+      <input
+        type="radio"
+        class="radio__button"
+        id="random"
+        value="random"
+        name="patternType"
+        checked
+      />
+      <label for="random" class="radio__label">🎲 Random</label>
+
+      <input
+        type="radio"
+        id="border"
+        class="radio__button"
+        value="border"
+        name="patternType"
+      />
+      <label for="border" class="radio__label">🔲 Border</label>
+
+      <input
+        type="radio"
+        id="cover"
+        class="radio__button"
+        value="cover"
+        name="patternType"
+      />
+      <label for="cover" class="radio__label">✨ Cover</label>
+    </div>
+  </div>
+
+  <div id="density" class="density__container" style="visibility: hidden">
+    <div>Density:</div>
+    <div>
+      <input id="count" value="5" class="input__field" />
+    </div>
+  </div>
+
+  <div class="switch" id="opacitySwitch" style="visibility: hidden">
+    <input
+      class="switch__toggle"
+      name="opacity__switch"
+      type="checkbox"
+      id="uniqueId"
+    />
+    <label class="switch__label" for="uniqueId">Randomize Opacity</label>
+  </div>
+
+  <div class="switch" id="strokeSwitch" style="visibility: hidden">
+    <input
+      class="switch__toggle"
+      name="stroke__switch"
+      type="checkbox"
+      id="strokeId"
+    />
+    <label class="switch__label" for="strokeId">Strokes</label>
+  </div>
+
+  <div id="selectionMessage">
+    <div
+      class="onboarding-tip"
+      style="align-items: center; justify-content: center"
+    >
+      <div class="icon icon--warning icon--purple"></div>
+      <div class="onboarding-tip__msg type--medium type--large">
+        No frame selected. Select a frame to continue ...
+      </div>
+    </div>
+  </div>
+
+  <div class="button__container" id="create" style="visibility: hidden">
+    <button class="button button--primary">Create</button>
+  </div>
+</div>
+
 <script>
   const selectionText = document.getElementById("selectionMessage");
-  const inputField = document.getElementById("count");
+  const inputField = document.getElementById("density");
   const createBtn = document.getElementById("create");
-  const cancelBtn = document.getElementById("cancel");
+  const pattern = document.getElementById("pattern");
+
+  const random = document.getElementById("random");
+  const border = document.getElementById("border");
+  const cover = document.getElementById("cover");
+
+  const densityVal = document.getElementById("count");
+
+  const opacitySwitch = document.getElementById("opacitySwitch");
+  const strokeSwitch = document.getElementById("strokeSwitch");
+
+  const opacityToggle = document.getElementById("uniqueId");
+  const strokeToggle = document.getElementById("strokeId");
+
   window.onmessage = (e) => {
-    if (e.data.pluginMessage.selection === "yes") {
-      selectionText.style.visibility = "hidden";
+    if (e.data.pluginMessage.job === "selection") {
+      if (e.data.pluginMessage.selection === "yes") {
+        selectionText.style.visibility = "hidden";
 
-      createBtn.style.visibility = "visible";
-      cancelBtn.style.visibility = "visible";
-      inputField.style.visibility = "visible";
-    } else {
-      selectionText.style.visibility = "visible";
+        createBtn.style.visibility = "visible";
+        inputField.style.visibility = "visible";
+        pattern.style.visibility = "visible";
+        opacitySwitch.style.visibility = "visible";
+        strokeSwitch.style.visibility = "visible";
+      } else {
+        selectionText.style.visibility = "visible";
 
-      createBtn.style.visibility = "hidden";
-      cancelBtn.style.visibility = "hidden";
-      inputField.style.visibility = "hidden";
+        createBtn.style.visibility = "hidden";
+        inputField.style.visibility = "hidden";
+        pattern.style.visibility = "hidden";
+        opacitySwitch.style.visibility = "hidden";
+        strokeSwitch.style.visibility = "hidden";
+      }
+    }
+
+    if (e.data.pluginMessage.job === "storage") {
+      console.log(e.data.pluginMessage);
+      densityVal.value = e.data.pluginMessage.density
+        ? e.data.pluginMessage.density
+        : 5;
+
+      if (e.data.pluginMessage.pattern === "random") {
+        random.checked = true;
+      } else if (e.data.pluginMessage.pattern === "border") {
+        border.checked = true;
+      } else if (e.data.pluginMessage.pattern === "cover") {
+        cover.checked = true;
+      }
+
+      if (e.data.pluginMessage.opacity === true) {
+        opacityToggle.checked = true;
+      } else {
+        opacityToggle.checked = false;
+      }
+
+      if (e.data.pluginMessage.stroke === true) {
+        strokeToggle.checked = true;
+      } else {
+        strokeToggle.checked = false;
+      }
     }
   };
 
   document.getElementById("create").onclick = () => {
     const textbox = document.getElementById("count");
     const count = parseInt(textbox.value, 10);
+    const patternType = document.querySelector(
+      "input[name=patternType]:checked"
+    ).value;
+
+    let opacitySwitch = document.querySelector(
+      "input[name=opacity__switch]:checked"
+    );
+
+    let strokeSwitch = document.querySelector(
+      "input[name=stroke__switch]:checked"
+    );
+
+    if (opacitySwitch != null) {
+      opacitySwitch = true;
+    } else {
+      opacitySwitch = false;
+    }
+
+    if (strokeSwitch != null) {
+      strokeSwitch = true;
+    } else {
+      strokeSwitch = false;
+    }
+
     parent.postMessage(
-      { pluginMessage: { type: "create-rectangles", count } },
+      {
+        pluginMessage: {
+          type: "create-rectangles",
+          count,
+          patternType,
+          opacitySwitch,
+          strokeSwitch,
+        },
+      },
       "*"
     );
-  };
-
-  document.getElementById("cancel").onclick = () => {
-    parent.postMessage({ pluginMessage: { type: "cancel" } }, "*");
   };
 </script>
